@@ -1,0 +1,9 @@
+defaults:
+- moonshine
+- _self_
+
+hydra:
+  output_subdir:
+  run:
+    dir: data/logs/moonshine/${now:%Y-%m-%d}/
+    
