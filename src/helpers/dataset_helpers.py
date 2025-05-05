@@ -18,6 +18,6 @@ def prepare_featurizers(
     feature_extractor = SpeechFeaturizer(**dict(speech_config))
 
     tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf", token=os.getenv("HF_TOKEN"))
-    tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+    # tokenizer.add_special_tokens({"pad_token": "[PAD]"})
     
     return feature_extractor, tokenizer

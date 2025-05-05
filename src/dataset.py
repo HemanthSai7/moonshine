@@ -1,12 +1,13 @@
 from src.schemas import TrainInput, TrainLabel
 from src import DatasetConfig
 from src.speech_featurizer import SpeechFeaturizer
-# from src.tokenizer import Tokenizer
 from src.utils import (
     data_util,
     file_util,
     math_util,
 )
+
+from transformers import AutoTokenizer
 
 import os
 import json
@@ -17,7 +18,7 @@ import tensorflow as tf
 logger = tf.get_logger()
 
 def get(
-    tokenizer,
+    tokenizer: AutoTokenizer,
     speech_featurizer: SpeechFeaturizer,
     dataset_config: DatasetConfig,
 ):
@@ -72,7 +73,7 @@ class ASRDataset(BaseDataset):
     def __init__(
         self,
         stage: str,
-        tokenizer,
+        tokenizer: AutoTokenizer,
         speech_featurizer: SpeechFeaturizer,
         data_paths: list,
         cache: bool = False,
@@ -128,10 +129,11 @@ class ASRDataset(BaseDataset):
 
         transcript_str = tf.strings.as_string(transcript)
         transcript_str = tf.ensure_shape(transcript_str, [])
+        print("transcript_str", transcript_str)
 
         def tokenize_transcript(text):
             text_str = text.numpy().decode("utf-8")
-            return np.array(self.tokenizer.encode(text_str), dtype=np.int32)
+            return np.array(self.tokenizer.encode(text_str, add_special_tokens=True), dtype=np.int32)
         
         labels = tf.py_function(
             func=tokenize_transcript,
@@ -187,12 +189,12 @@ class ASRDataset(BaseDataset):
             padded_shapes=padded_shapes,
             padding_values = (
                 TrainInput(
-                    inputs=0.0,
-                    inputs_length=tf.constant(0, dtype=tf.int32),
+                    inputs=32000.0,
+                    inputs_length=tf.constant(32000, dtype=tf.int32),
                 ),
                 TrainLabel(
-                    labels=tf.constant(0, dtype=tf.int32),
-                    labels_length=tf.constant(0, dtype=tf.int32),
+                    labels=tf.constant(32000, dtype=tf.int32),
+                    labels_length=tf.constant(32000, dtype=tf.int32),
                 ),
             ),
             drop_remainder=self.drop_remainder,

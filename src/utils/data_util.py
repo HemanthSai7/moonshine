@@ -13,7 +13,6 @@ def read_raw_audio(
 ) -> Union[np.ndarray, tf.Tensor]:
     
     if isinstance(audio, str):
-        # print("HERE")
         return librosa.load(os.path.expanduser(audio), sr=sample_rate, mono=True)[0]
         
     if isinstance(audio, bytes):

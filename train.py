@@ -43,15 +43,11 @@ def main(
         tokenizer=tokenizer,
         dataset_config=config.learning_config.eval_dataset_config,
     )
+    
+    train_data_loader = train_dataset.create(batch_size=batch_size)
+    valid_data_loader = valid_dataset.create(batch_size=batch_size)
 
-    train_data_loader = train_dataset.create(
-        batch_size=batch_size,
-    )
-    valid_data_loader = valid_dataset.create(
-        batch_size=batch_size,
-    )
-
-    for data in train_data_loader:
+    for data in valid_data_loader:
         print(data)
         break
 

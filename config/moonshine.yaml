@@ -2,7 +2,7 @@ speech_config:
   sample_rate: 16000
   feature_type: waveform
   preemphasis: 0.97
-  normalize_signal: False
+  normalize_signal: True # Whisper normalizes the signal
   padding: 0.0
 
 decoder_config:
@@ -50,7 +50,6 @@ model_config:
 learning_config:
   train_dataset_config:
     enabled: True
-    sample_rate: 16000
     data_paths:
       - /home/hemanth/InHouseODV/odvModelTraining.hemanth.saigarladinne/data/LibriSpeech/t.tsv
     shuffle: False
@@ -63,7 +62,6 @@ learning_config:
 
   eval_dataset_config:
     enabled: True
-    sample_rate: 16000
     data_paths:
       - /home/hemanth/InHouseODV/odvModelTraining.hemanth.saigarladinne/data/LibriSpeech/v.tsv
     shuffle: True
@@ -76,7 +74,6 @@ learning_config:
 
   test_dataset_configs:
     enabled: True
-    sample_rate: 16000
     data_paths:
       - /home/hemanth/InHouseODV/odvModelTraining.hemanth.saigarladinne/data/LibriSpeech/test.tsv
     shuffle: False
@@ -98,8 +95,6 @@ learning_config:
     momentum: 0.9
     nesterov: True
   
-  ga_steps: 0
-  gradn_config: null
   pretrained: False
 
   running_config:
