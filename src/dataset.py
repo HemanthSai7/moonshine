@@ -29,6 +29,40 @@ def get(
         data_paths=list(dataset_config.data_paths),
     )
 
+def get_shape(
+    config,
+    *datasets,
+    batch_size: int = None,
+):
+    batch_size = batch_size or config.learning_config.running_config.batch_size
+
+    max_input_length, max_label_length = None, None
+
+    input_shape = [max_input_length]
+    predictions_shape = [max_label_length]
+    label_shape = [max_label_length]
+
+    padded_shapes = (
+        TrainInput(
+            inputs=tf.TensorShape(input_shape),
+            inputs_length=tf.TensorShape([]),
+            predictions=tf.TensorShape(predictions_shape),
+            predictions_length=tf.TensorShape([]),
+        ),
+        TrainLabel(
+            labels=tf.TensorShape(label_shape),
+            labels_length=tf.TensorShape([]),
+        )
+    )
+
+    return dict(
+        batch_size=batch_size,
+        input_shape=input_shape,
+        predictions_shape=predictions_shape,
+        label_shape=label_shape,
+        padded_shapes=padded_shapes,
+    )
+
 BUFFER_SIZE = 100
 AUTOTUNE = int(os.environ.get("AUTOTUNE", tf.data.AUTOTUNE))
 
@@ -129,7 +163,6 @@ class ASRDataset(BaseDataset):
 
         transcript_str = tf.strings.as_string(transcript)
         transcript_str = tf.ensure_shape(transcript_str, [])
-        print("transcript_str", transcript_str)
 
         def tokenize_transcript(text):
             text_str = text.numpy().decode("utf-8")
@@ -141,21 +174,26 @@ class ASRDataset(BaseDataset):
             Tout=tf.int32,
         )
 
+        predictions = labels
+        predictions_length = tf.shape(predictions)[0]
+
         labels_length = tf.cast(tf.shape(labels)[0], tf.int32)
 
-        return path, inputs, inputs_length, labels, labels_length
+        return path, inputs, inputs_length, predictions, predictions_length, labels, labels_length
     
     def parse(self, path: tf.Tensor, audio: tf.Tensor, transcript: tf.Tensor):
         (
             _,
             inputs,
             inputs_length,
+            predictions,
+            predictions_length,
             labels,
             labels_length,
         ) = self._process_item(path=path, audio=audio, transcript=transcript)
 
         return (
-            TrainInput(inputs=inputs, inputs_length=inputs_length),
+            TrainInput(inputs=inputs, inputs_length=inputs_length, predictions=predictions, predictions_length=predictions_length),
             TrainLabel(labels=labels, labels_length=labels_length),
         )
     
@@ -177,6 +215,8 @@ class ASRDataset(BaseDataset):
                 TrainInput(
                     inputs=tf.TensorShape([None]),
                     inputs_length=tf.TensorShape([]),
+                    predictions=tf.TensorShape([None]),
+                    predictions_length=tf.TensorShape([]),
                 ),
                 TrainLabel(
                     labels=tf.TensorShape([None]),
@@ -191,6 +231,8 @@ class ASRDataset(BaseDataset):
                 TrainInput(
                     inputs=32000.0,
                     inputs_length=tf.constant(32000, dtype=tf.int32),
+                    predictions=tf.constant(32000, dtype=tf.int32),
+                    predictions_length=tf.constant(32000, dtype=tf.int32),
                 ),
                 TrainLabel(
                     labels=tf.constant(32000, dtype=tf.int32),

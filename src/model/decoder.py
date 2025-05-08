@@ -5,6 +5,8 @@ from src.model.layers import (
 
 import tensorflow as tf
 
+__all__ = ["MoonshineDecoder"]
+
 
 @tf.keras.utils.register_keras_serializable(package=__name__)
 class TextEmbeddings(tf.keras.layers.Layer):
@@ -44,11 +46,11 @@ class MoonshineDecoderBlock(tf.keras.layers.Layer):
     def __init__(
         self,
         input_dim: int,
-        encoder_num_blocks: int = 6,
         decoder_num_blocks: int = 6,
         num_heads: int = 8,
         head_size: int= 64,
         fc_factor: int = 4,
+        activation: str = "swiglu",
         dropout: float = 0.0,
         kernel_initializer: str = "glorot_uniform",
         kernel_regularizer: str = None,
@@ -58,23 +60,11 @@ class MoonshineDecoderBlock(tf.keras.layers.Layer):
         **kwargs,
     ):
         super(MoonshineDecoderBlock, self).__init__(name=name, **kwargs)
-        self.encoder_num_blocks = encoder_num_blocks
         self.decoder_num_blocks = decoder_num_blocks
         self.num_heads = num_heads
         self.head_size = head_size
         self.fc_factor = fc_factor
 
-        self.cross_attn = MultiHeadAttention(
-            num_heads=num_heads,
-            head_size=head_size,
-            output_size=input_dim,
-            dropout=dropout,
-            kernel_initializer=kernel_initializer,
-            kernel_regularizer=kernel_regularizer,
-            bias_regularizer=bias_regularizer,
-            bias_initializer=bias_initializer,
-            name=f"{name}_cross_attn",
-        )
         self.self_attn = CausalMultiHeadAttention(
             num_heads=num_heads,
             head_size=head_size,
@@ -86,38 +76,45 @@ class MoonshineDecoderBlock(tf.keras.layers.Layer):
             bias_initializer=bias_initializer,
             name=f"{name}_self_attn",
         )
+        self.cross_attn = MultiHeadAttention(
+            num_heads=num_heads,
+            head_size=head_size,
+            output_size=input_dim,
+            dropout=dropout,
+            kernel_initializer=kernel_initializer,
+            kernel_regularizer=kernel_regularizer,
+            bias_regularizer=bias_regularizer,
+            bias_initializer=bias_initializer,
+            name=f"{name}_cross_attn",
+        )
         self.mlp = FFNModule(
             input_dim=input_dim,
             fc_factor=fc_factor,
             dropout=dropout,
-            activation="swiglu",
+            activation=activation,
             kernel_initializer=kernel_initializer,
             kernel_regularizer=kernel_regularizer,
             bias_regularizer=bias_regularizer,
             bias_initializer=bias_initializer,
             name=f"{name}_mlp",
         )
-        self.ln = tf.keras.layers.LayerNormalization(
-            name=f"{name}_ln",
-            gamma_regularizer=kernel_regularizer,
-            beta_regularizer=bias_regularizer,
-        )
+
 
     def call(self, inputs, training=False, mask=None):
         query_pos_emb, key_pos_emb, outputs, enc_key_emb, enc_val_emb = inputs
-        outputs = self.self_attn([query_pos_emb, key_pos_emb, outputs], training=training) # causal
-        outputs = self.cross_attn([query_pos_emb, enc_key_emb, enc_val_emb], training=training) #cross attention
-        outputs = self.mlp(outputs, training=training)
-        outputs = self.ln(outputs)
+
+        attn_out = self.self_attn([query_pos_emb, key_pos_emb, outputs], training=training)
+        cross_out = self.cross_attn([attn_out, enc_key_emb, enc_val_emb], training=training)
+        outputs = self.mlp(cross_out, training=training)
+
         return outputs
-    
+
     def compute_output_shape(self, input_shape):
         return input_shape[0], input_shape[1], input_shape[2]
     
     def get_config(self):
         config = super(MoonshineDecoderBlock, self).get_config()
         config.update({
-            "encoder_num_blocks": self.encoder_num_blocks,
             "decoder_num_blocks": self.decoder_num_blocks,
             "num_heads": self.num_heads,
             "head_size": self.head_size,
@@ -131,12 +128,12 @@ class MoonshineDecoder(tf.keras.Model):
     def __init__(
         self,
         vocab_size: int,
-        d_model: int,
-        encoder_num_blocks: int = 6,
+        d_model: int = 288,
         decoder_num_blocks: int = 6,
-        num_heads: int = 8,
-        head_size: int= 64,
-        fc_factor: int = 4,
+        num_heads: int = 6,
+        head_size: int = 32,
+        fc_factor: int = 2,
+        activation: str = "swiglu",
         dropout: float = 0.0,
         kernel_initializer: str = "glorot_uniform",
         kernel_regularizer: str = None,
@@ -148,7 +145,6 @@ class MoonshineDecoder(tf.keras.Model):
         super(MoonshineDecoder, self).__init__(name=name, **kwargs)
         self.vocab_size = vocab_size
         self.d_model = d_model
-        self.encoder_num_blocks = encoder_num_blocks
         self.decoder_num_blocks = decoder_num_blocks
 
         self.text_emb = TextEmbeddings(
@@ -162,11 +158,11 @@ class MoonshineDecoder(tf.keras.Model):
         self.decoder_blocks = [
             MoonshineDecoderBlock(
                 input_dim=d_model,
-                encoder_num_blocks=encoder_num_blocks,
                 decoder_num_blocks=decoder_num_blocks,
                 num_heads=num_heads,
                 head_size=head_size,
                 fc_factor=fc_factor,
+                activation=activation,
                 dropout=dropout,
                 kernel_initializer=kernel_initializer,
                 kernel_regularizer=kernel_regularizer,
@@ -192,7 +188,7 @@ class MoonshineDecoder(tf.keras.Model):
         self.do = tf.keras.layers.Dropout(rate=dropout, name=f"{name}_dropout")
 
     def call(self, inputs, training=False, mask=None):
-        decoder_inputs, encoder_outputs = inputs
+        encoder_outputs, *decoder_inputs = inputs
 
         decoder_tokens, decoder_length = decoder_inputs
         outputs = self.text_emb(
@@ -203,8 +199,7 @@ class MoonshineDecoder(tf.keras.Model):
         encoder_key_emb = self.rotary_pos_emb(encoder_embed)
         encoder_val_emb = encoder_embed
 
-        for block in self.decoder_blocks:
-
+        for i, block in enumerate(self.decoder_blocks):
             query_pos_emb = self.rotary_pos_emb(outputs)
             key_pos_emb = self.rotary_pos_emb(outputs)
             outputs = block(
@@ -217,4 +212,28 @@ class MoonshineDecoder(tf.keras.Model):
         outputs = self.proj(outputs, training=training)
 
         return outputs
+
+    def compute_output_shape(self, input_shape):
+        # Input shape is [encoder_outputs_shape, predictions_shape, predictions_length_shape]
+        if len(input_shape) == 3:
+            encoder_outputs_shape, predictions_shape, predictions_length_shape = input_shape
+        elif len(input_shape) == 2:
+            encoder_outputs_shape, predictions_shape = input_shape
+            predictions_length_shape = None
+        else:
+            # Handle other cases as needed
+            encoder_outputs_shape = input_shape
+            predictions_shape = None
+            predictions_length_shape = None
+        
+        # Determine batch size and sequence length
+        if predictions_shape is not None:
+            batch_size = predictions_shape[0] if predictions_shape[0] is not None else None
+            seq_len = predictions_shape[1] if len(predictions_shape) > 1 else None
+        else:
+            batch_size = encoder_outputs_shape[0] if encoder_outputs_shape[0] is not None else None
+            seq_len = None  # Can't determine without predictions shape
+        
+        # Return final shape after projection layer
+        return (batch_size, seq_len, self.vocab_size)
 

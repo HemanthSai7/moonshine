@@ -1,9 +1,11 @@
 import collections
 
-def TrainInput(inputs, inputs_length,):
+def TrainInput(inputs, inputs_length, predictions, predictions_length):
     outputs = {
         "inputs": inputs,
         "inputs_length": inputs_length,
+        "predictions": predictions,
+        "predictions_length": predictions_length,
     }
     return outputs
 

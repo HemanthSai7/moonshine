@@ -45,29 +45,30 @@ class Conv1dSubsamplingLayer(tf.keras.layers.Layer):
                 filters=self.filters[i],
                 kernel_size=self.kernel_size[i],
                 strides=self.strides[i],
-                padding=self.padding,
+                padding=self.padding[i],
                 kernel_regularizer=kernel_regularizer,
                 bias_regularizer=bias_regularizer,
                 kernel_initializer=kernel_initializer,
                 bias_initializer=bias_initializer,
-                name=f"{name}_conv_{i + 1}",
+                name=f"{name}_conv_{i}",
             )
             ac = tf.keras.layers.Activation(activations[i], name=f"{name}_activation_{i + 1}")
             self.conv.append({"conv": conv, "activation": ac})
 
     def call(self, inputs, training=False):
         inputs, inputs_length = inputs
+        inputs = tf.expand_dims(inputs, axis=-1)
         
         for i, conv in enumerate(self.conv):
             outputs = conv["conv"](inputs, training=training)
             outputs = conv["activation"](outputs)
 
             outputs_length = math_util.get_conv_length(
-            inputs_length,
-            self.kernel_size[i],
-            self.strides[i],
-            self.padding[i],
-        )
+                inputs_length,
+                self.kernel_size[i],
+                self.strides[i],
+                self.padding[i],
+            )
 
         outputs = self.do(outputs, training=training)
         outputs = self.ln(outputs)
@@ -87,13 +88,15 @@ class Conv1dSubsamplingLayer(tf.keras.layers.Layer):
         return (input_shape[0], inputs_length, self.filters[-1])
     
     def get_config(self):
-        conf = super().get_config()
-        conf.update({self.do.get_config()})
-        conf.update({self.ln.get_config()})
-        for conv in self.conv:
-            conf.update(conv["conv"].get_config())
-            conf.update(conv["activation"].get_config())
-        return conf
+        config = super().get_config()
+        config.update({
+            "model_dim": self.filters[-1],
+            "kernel_size": self.kernel_size,
+            "strides": self.strides,
+            "padding": self.padding,
+            "dropout_rate": self.do.rate,
+        })
+        return config
     
 @tf.keras.utils.register_keras_serializable(package=__name__)
 class MHASModule(tf.keras.layers.Layer):
@@ -106,7 +109,7 @@ class MHASModule(tf.keras.layers.Layer):
         bias_regularizer: Union[str, Callable] = None,
         kernel_initializer: Union[str, Callable] = "glorot_uniform",
         bias_initializer: Union[str, Callable] = "zeros",
-        name: str = "mhas_module",
+        name: str = "mhsa_module",
         **kwargs,
     ):
         super(MHASModule, self).__init__(name=name, **kwargs)
@@ -132,7 +135,7 @@ class MHASModule(tf.keras.layers.Layer):
         query, key, outputs = inputs
         outputs = self.mha([query, key, outputs], training=training)
         outputs = self.do(outputs, training=training)
-        outputs = self.res_add([outputs, inputs])
+        outputs = self.res_add([outputs, inputs[2]])
         outputs = self.ln(outputs)
         return outputs
     
@@ -144,7 +147,6 @@ class MHASModule(tf.keras.layers.Layer):
         conf.update(self.ln.get_config())
         conf.update(self.mha.get_config())
         conf.update(self.do.get_config())
-        conf.update(self.rotary_pos_emb.get_config())
         return conf
 
 @tf.keras.utils.register_keras_serializable(package=__name__)
@@ -154,6 +156,7 @@ class MoonshineEncoderBlock(tf.keras.layers.Layer):
         input_dim: int,
         dropout: float = 0.0,
         fc_factor: int = 4,
+        activation: str = "gelu",
         head_size: int = 64,
         num_heads: int = 4,
         kernel_regularizer: Union[str, Callable] = None,
@@ -174,15 +177,11 @@ class MoonshineEncoderBlock(tf.keras.layers.Layer):
             kernel_initializer=kernel_initializer,
             bias_initializer=bias_initializer,
         )
-        self.ln = tf.keras.layers.LayerNormalization(
-            name=f"{name}_ln",
-            gamma_regularizer=kernel_regularizer,
-            beta_regularizer=bias_regularizer,
-        )
         self.ffn = FFNModule(
             input_dim=input_dim,
             dropout=dropout,
             fc_factor=fc_factor,
+            activation=activation,
             kernel_regularizer=kernel_regularizer,
             bias_regularizer=bias_regularizer,
             kernel_initializer=kernel_initializer,
@@ -217,9 +216,10 @@ class MoonshineEncoder(tf.keras.Model):
         self,
         input_dim: int,
         num_blocks: int = 6,
-        dropout: float = 0.0,
+        dropout: float = 0.1,
         fc_factor: int = 4,
-        head_size: int = 64,
+        activation: str = "gelu",
+        head_size: int = 32,
         num_heads: int = 4,
         kernel_regularizer: Union[str, Callable] = None,
         bias_regularizer: Union[str, Callable] = None,
@@ -247,14 +247,16 @@ class MoonshineEncoder(tf.keras.Model):
                 input_dim=input_dim,
                 dropout=dropout,
                 fc_factor=fc_factor,
+                activation=activation,
                 head_size=head_size,
                 num_heads=num_heads,
                 kernel_regularizer=kernel_regularizer,
                 bias_regularizer=bias_regularizer,
                 kernel_initializer=kernel_initializer,
                 bias_initializer=bias_initializer,
+                name=f"{name}_encoder_block_{i}",
             )
-            for _ in range(num_blocks)
+            for i in range(num_blocks)
         ]
         self.ln = tf.keras.layers.LayerNormalization(
             name=f"{name}_ln",
@@ -270,19 +272,48 @@ class MoonshineEncoder(tf.keras.Model):
 
         query_pos_emb = self.rotary_pos_emb(outputs)
         key_pos_emb = self.rotary_pos_emb(outputs)
-
         for block in self.blocks:
             outputs = block([query_pos_emb, key_pos_emb, outputs], training=training, mask=mask)
-        # outputs = self.ln(outputs)
+        outputs = self.ln(outputs)
         return outputs
     
     def compute_output_shape(self, input_shape):
-        return input_shape[0], input_shape[1], input_shape[2]
+        # input_shape is [inputs_shape, inputs_length_shape]
+        if len(input_shape) == 2:
+            inputs_shape, inputs_length_shape = input_shape
+        else:
+            inputs_shape = input_shape
+            inputs_length_shape = None
+        
+        # Get batch size
+        batch_size = inputs_shape[0] if inputs_shape[0] is not None else None
+        
+        # Apply convolutional subsampling shape transformation
+        if len(inputs_shape) == 2:  # [batch_size, time]
+            time_dim = inputs_shape[1]
+        elif len(inputs_shape) == 3:  # [batch_size, time, features]
+            time_dim = inputs_shape[1]
+        else:
+            time_dim = None
+        
+        # Calculate output sequence length after convolution
+        if time_dim is not None:
+            output_time_dim = time_dim
+            for i in range(len(self.conv_subsampling.kernel_size)):
+                if self.conv_subsampling.padding[i] == "same":
+                    output_time_dim = tf.math.ceil(output_time_dim / self.conv_subsampling.strides[i])
+                elif self.conv_subsampling.padding[i] == "valid":
+                    output_time_dim = tf.math.floor((output_time_dim - self.conv_subsampling.kernel_size[i] + 1) / self.conv_subsampling.strides[i])
+        else:
+            output_time_dim = None
+
+        return (batch_size, output_time_dim, self.conv_subsampling.filters[-1])
     
     def get_config(self):
         conf = super().get_config()
         conf.update(self.ln.get_config())
         conf.update(self.do.get_config())
+        conf.update(self.rotary_pos_emb.get_config())
         for block in self.blocks:
             conf.update(block.get_config())
         return conf

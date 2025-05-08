@@ -115,12 +115,37 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         depth = tf.constant(self.head_size, dtype=tf.float32)
         query /= tf.math.sqrt(depth)
         logits = tf.einsum("...NHO,...MHO->...HNM", query, key)
-        output, attn_coef = self.call_attention(query, key, value, logits, training=training, mask=mask)
+        output, attn_coef = self.call_attention(query, key, value, logits, training=training)
 
         if self.return_attn_coef:
             return output, attn_coef
         else:
             return output
+        
+    def compute_output_shape(self, input_shape):
+        # input_shape is a list of [query_shape, key_shape, value_shape]
+        query_shape = input_shape[0]
+        
+        # Get output projection size
+        output_size = self.output_size if self.output_size is not None else query_shape[-1]
+        
+        # Return shape: [batch_size, query_seq_len, output_size]
+        return (query_shape[0], query_shape[1], output_size)
+    
+    def get_config(self):
+        config = super(MultiHeadAttention, self).get_config()
+        config.update({
+            "num_heads": self.num_heads,
+            "head_size": self.head_size,
+            "output_size": self.output_size,
+            "dropout": self.dropout,
+            "return_attn_coef": self.return_attn_coef,
+            "kernel_initializer": self.kernel_initializer,
+            "kernel_regularizer": self.kernel_regularizer,
+            "bias_regularizer": self.bias_regularizer,
+            "bias_initializer": self.bias_initializer,
+        })
+        return config
         
 
 @tf.keras.utils.register_keras_serializable(package=__name__)
@@ -168,12 +193,12 @@ class CausalMultiHeadAttention(MultiHeadAttention):
         logits = tf.einsum("...NHO,...MHO->...HNM", query, key)
 
         causal_mask = self.compute_causal_mask(query, value)
-        if mask is not None:
-            causal_mask = tf.cast(causal_mask, tf.float32)
-            mask = tf.cast(mask, tf.float32)
-            mask = mask * causal_mask
-        else:
-            mask = causal_mask
+        # if mask is not None or len(mask) > 0:
+        #     causal_mask = tf.cast(causal_mask, tf.float32)
+        #     mask = tf.cast(mask, tf.float32)
+        #     mask = mask * causal_mask
+        # else:
+        mask = causal_mask
 
 
         output, attn_coef = self.call_attention(query, key, value, logits, training=training, mask=mask)

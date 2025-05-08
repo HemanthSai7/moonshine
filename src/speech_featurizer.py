@@ -31,7 +31,6 @@ class SpeechFeaturizer(tf.keras.layers.Layer):
         return signal
     
     def preemphasis_signal(self, signal):
-        print(signal)
         if not self.preemphasis or self.preemphasis <= 0.0:
             return signal
         s0 = tf.expand_dims(signal[0], axis=-1)

@@ -14,11 +14,7 @@ class SwiGLU(tf.keras.layers.Layer):
         super(SwiGLU, self).__init__(name=name, **kwargs)
         self.axis = axis
 
-    def call(
-            self,
-            inputs,
-            **kwargs,
-    ):
+    def call(self,inputs,**kwargs):
         a, b = tf.split(inputs, 2, axis=self.axis)
         b = tf.nn.silu(b)
         return tf.multiply(a, b)
@@ -33,7 +29,7 @@ class SwiGLU(tf.keras.layers.Layer):
 def get_activation(name: str):
     activations = {
         "gelu": tf.keras.activations.gelu,
-        "swiglu": SwiGLU,
+        "swiglu": SwiGLU(),
         "relu": tf.keras.activations.relu,
         "sigmoid": tf.keras.activations.sigmoid,
     }
