@@ -92,7 +92,7 @@ def main(
         outputs = moonshine({"inputs": dummy_inputs, "inputs_length": dummy_inputs_length, "predictions":dummy_predictions, "predictions_length":dummy_predictions_length}, training=True)
         logger.info("Model call successful")
         logger.info(f"Output shape: {outputs.shape}")
-        moonshine.summary(expand_nested=True)
+        moonshine.summary()
     except Exception as e:
         logger.error(f"Error during model call: {e}")
         raise
